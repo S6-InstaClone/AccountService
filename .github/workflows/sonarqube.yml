@@ -1,20 +1,20 @@
-name: SonarQube Scan
+name: SonarCloud Analysis
 
 on:
   push:
     branches: [ "master" ]
   pull_request:
-    types: [opened, synchronize, reopened]
+    branches: [ "master" ]
 
 jobs:
-  build:
+  sonar:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required for SonarQube to get full history
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -24,19 +24,35 @@ jobs:
       - name: Install SonarScanner
         run: dotnet tool install --global dotnet-sonarscanner
 
-      - name: Begin SonarQube analysis
+      - name: Begin analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           dotnet sonarscanner begin \
             /k:"S6-InstaClone_AccountService" \
             /o:"s6-instaclone" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
             /d:sonar.login="$SONAR_TOKEN"
 
-      - name: Build project
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
         run: dotnet build --no-incremental
 
-      - name: End SonarQube analysis
+      - name: Test with coverage
+        run: |
+          dotnet test \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults
+
+          reportgenerator \
+            -reports:./TestResults/**/coverage.cobertura.xml \
+            -targetdir:./coverage \
+            -reporttypes:opencover
+
+      - name: End analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: dotnet sonarscanner end /d:sonar.login="$SONAR_TOKEN"
