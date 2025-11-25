@@ -3,6 +3,7 @@ using AccountService.Business;
 using AccountService.Data;
 using AccountService.Persistence;
 using Microsoft.EntityFrameworkCore;
+using MassTransit;
 
 namespace AccountService
 {
@@ -22,8 +23,27 @@ namespace AccountService
             builder.Services.AddSwaggerGen();
             builder.Services.AddScoped<BlobService>();
             builder.Services.AddScoped<ProfileService>();
+            builder.Services.AddHttpClient<KeycloakService>();
+
+            builder.Services.AddMassTransit(x =>
+            {
+                x.UsingRabbitMq((context, cfg) =>
+                {
+                    cfg.Host("rabbitmq", "/", h =>
+                    {
+                        h.Username("admin");
+                        h.Password("admin");
+                    });
+                });
+            });
+
             var app = builder.Build();
 
+            using (var scope = app.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AccountRepository>();
+                db.Database.Migrate(); // Auto-applies pending migrations
+            }
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())
             {

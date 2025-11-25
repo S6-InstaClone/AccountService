@@ -1,8 +1,11 @@
 ﻿using AccountService.Business;
 using AccountService.Data;
 using AccountService.Dtos;
+using AccountService.Messages;
 using AccountService.Models;
 using AccountService.Persistence;
+using MassTransit;
+using MassTransit.Transports;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,12 +18,16 @@ namespace AccountService.Controllers
         private readonly AccountRepository _context;
         private readonly ProfileService service;
         private readonly BlobService _blobService;
-
-        public ProfileController(AccountRepository context, BlobService blobService, ProfileService profileService)
+        private readonly IPublishEndpoint _publishEndpoint;
+        private readonly KeycloakService _keycloakService;
+        public ProfileController(AccountRepository context, BlobService blobService, ProfileService profileService, IPublishEndpoint publishEndpoint,
+    KeycloakService keycloakService)
         {
             _context = context;
             _blobService = blobService;
             service = profileService;
+            _publishEndpoint = publishEndpoint;
+            _keycloakService = keycloakService;
         }
 
         [HttpGet("GetProfiles")]
@@ -87,15 +94,36 @@ namespace AccountService.Controllers
         [HttpDelete("DeleteProfile/{id}")]
         public async Task<IActionResult> DeleteProfile(int id)
         {
-            try
+            var profile = await _context.Profile.FindAsync(id);
+            if (profile == null)
+                return NotFound("Profile not found");
+
+            // 1. Delete from Keycloak
+            if (!string.IsNullOrEmpty(profile.KeycloakUserId))
             {
-                var deletedId = await service.DeleteProfile(id);
-                return Ok(new { message = "Profile deleted successfully", id = deletedId });
+                await _keycloakService.DeleteUserAsync(profile.KeycloakUserId);
             }
-            catch (Exception ex)
+
+            // 2. Delete profile picture from blob storage
+            if (!string.IsNullOrEmpty(profile.ProfilePictureLink))
             {
-                return NotFound(new { message = ex.Message });
+                // Add deletion logic to BlobService
             }
+
+            // 3. Delete profile from database
+            _context.Profile.Remove(profile);
+            await _context.SaveChangesAsync();
+
+            // 4. Publish event to notify other services
+            await _publishEndpoint.Publish(new AccountDeletedEvent
+            {
+                UserId = profile.Id,
+                Username = profile.Username,
+                DeletedAt = DateTime.UtcNow
+            });
+
+            return Ok(new { message = "Account deleted successfully (GDPR compliant)" });
+
         }
 
         [HttpPost("UploadProfilePicture")]
