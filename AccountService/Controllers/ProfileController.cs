@@ -129,15 +129,15 @@ namespace AccountService.Controllers
                 }
 
                 // Step 2: Delete profile from local database (if exists)
-                var profile = await _context.Profile
-                    .FirstOrDefaultAsync(p => p.KeycloakUserId == userId);
+                //var profile = await _context.Profile
+                //    .FirstOrDefaultAsync(p => p.KeycloakUserId == userId);
 
-                if (profile != null)
-                {
-                    _context.Profile.Remove(profile);
-                    await _context.SaveChangesAsync();
-                    _logger.LogInformation("GDPR Delete: Removed profile record for user {UserId}", userId);
-                }
+                //if (profile != null)
+                //{
+                //    _context.Profile.Remove(profile);
+                //    await _context.SaveChangesAsync();
+                //    _logger.LogInformation("GDPR Delete: Removed profile record for user {UserId}", userId);
+                //}
 
                 // Step 3: Publish message to RabbitMQ for other services
                 var message = new AccountDeletedEvent
