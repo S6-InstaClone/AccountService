@@ -143,7 +143,7 @@ namespace AccountService.Controllers
                 var message = new AccountDeletedEvent
                 {
                     UserId = userId,
-                    Username = userName ?? profile?.Username,
+                    //Username = userName ?? profile?.Username,
                     Email = userEmail,
                     DeletedAt = DateTime.UtcNow,
                     Reason = "GDPR_USER_REQUEST"
