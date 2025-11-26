@@ -1,142 +1,169 @@
-﻿using AccountService.Business;
-using AccountService.Data;
-using AccountService.Dtos;
-using AccountService.Messages;
-using AccountService.Models;
-using AccountService.Persistence;
-using MassTransit;
-using MassTransit.Transports;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using MassTransit;
+using AccountService.Data;
+using AccountService.Messages;
+using AccountService.Business;
 
 namespace AccountService.Controllers
 {
-    [Route("api/[controller]")]
     [ApiController]
-    public class ProfileController : ControllerBase
+    [Route("api/[controller]")]
+    public class AccountController : ControllerBase
     {
         private readonly AccountRepository _context;
-        private readonly ProfileService service;
-        private readonly BlobService _blobService;
         private readonly IPublishEndpoint _publishEndpoint;
         private readonly KeycloakService _keycloakService;
-        public ProfileController(AccountRepository context, BlobService blobService, ProfileService profileService, IPublishEndpoint publishEndpoint,
-    KeycloakService keycloakService)
+        private readonly ILogger<AccountController> _logger;
+
+        public AccountController(
+            AccountRepository context,
+            IPublishEndpoint publishEndpoint,
+            KeycloakService keycloakService,
+            ILogger<AccountController> logger)
         {
             _context = context;
-            _blobService = blobService;
-            service = profileService;
             _publishEndpoint = publishEndpoint;
             _keycloakService = keycloakService;
+            _logger = logger;
         }
 
-        [HttpGet("GetProfiles")]
-        public async Task<IActionResult> GetAllProfiles()
+        /// <summary>
+        /// Get user ID from X-User-Id header (set by API Gateway)
+        /// </summary>
+        private string? GetUserId()
         {
-            var result = await _context.Profile.Select(x => new Profile
+            return Request.Headers["X-User-Id"].FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Get user email from X-User-Email header (set by API Gateway)
+        /// </summary>
+        private string? GetUserEmail()
+        {
+            return Request.Headers["X-User-Email"].FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Get username from X-User-Name header (set by API Gateway)
+        /// </summary>
+        private string? GetUserName()
+        {
+            return Request.Headers["X-User-Name"].FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Get current user's account info
+        /// </summary>
+        [HttpGet("me")]
+        public async Task<IActionResult> GetMyAccount()
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId))
             {
-                Id = x.Id,
-                Name = x.Name,
-                Username = x.Username,
-                Description = x.Description
-            }).ToListAsync();
+                return Unauthorized(new { message = "User not authenticated" });
+            }
 
-            return Ok(result);
-        }
+            // Try to find profile by KeycloakUserId
+            var profile = await _context.Profile
+                .FirstOrDefaultAsync(p => p.KeycloakUserId == userId);
 
-        [HttpPost("CreateProfile")]
-        public async Task<ObjectResult> CreateProfile([FromBody] Profile profile)
-        {
             if (profile == null)
             {
-                return BadRequest("Profile data is missing.");
+                // Return basic info from headers if no profile exists
+                return Ok(new
+                {
+                    userId = userId,
+                    email = GetUserEmail(),
+                    username = GetUserName(),
+                    hasProfile = false
+                });
             }
 
-            CreateProfileDto dto = new CreateProfileDto(profile.Username, profile.Name, profile.Description);
-
-            int id = await service.CreateProfile(dto);
-            return Ok(new { message = "Profile created successfully", id });
-        }
-        [HttpPost("SearchForProfile")]
-        public ObjectResult SearchForProfile([FromBody] string username)
-        {
-            if (string.IsNullOrEmpty(username))
+            return Ok(new
             {
-                return BadRequest("Username input is missing.");
-            }
-            var results = service.SearchForAProfile(username);
-
-            return Ok(new { message = "", results });
-        }
-        [HttpPut("UpdateProfileName")]
-        public async Task<ObjectResult> UpdateProfileName([FromBody] UpdateProfileNameDto dto)
-        {
-            if (dto == null)
-            {
-                return BadRequest("Name data is missing.");
-            }
-
-            bool success = await service.UpdateProfileName(dto);
-            return Ok(new { message = "Profile updated successfully" });
-        }
-        [HttpPut("UpdateProfileDescription")]
-        public async Task<ObjectResult> UpdateProfileDescrition([FromBody] UpdateProfileDescDto dto)
-        {
-            if (dto == null)
-            {
-                return BadRequest("Profile data is missing.");
-            }
-
-            bool result = await service.UpdateProfileDescription(dto);
-            return Ok(new { message = "Profile description upadted successfully" });
-        }
-
-        [HttpDelete("DeleteProfile/{id}")]
-        public async Task<IActionResult> DeleteProfile(int id)
-        {
-            var profile = await _context.Profile.FindAsync(id);
-            if (profile == null)
-                return NotFound("Profile not found");
-
-            // 1. Delete from Keycloak
-            if (!string.IsNullOrEmpty(profile.KeycloakUserId))
-            {
-                await _keycloakService.DeleteUserAsync(profile.KeycloakUserId);
-            }
-
-            // 2. Delete profile picture from blob storage
-            if (!string.IsNullOrEmpty(profile.ProfilePictureLink))
-            {
-                // Add deletion logic to BlobService
-            }
-
-            // 3. Delete profile from database
-            _context.Profile.Remove(profile);
-            await _context.SaveChangesAsync();
-
-            // 4. Publish event to notify other services
-            await _publishEndpoint.Publish(new AccountDeletedEvent
-            {
-                UserId = profile.Id,
-                Username = profile.Username,
-                DeletedAt = DateTime.UtcNow
+                userId = userId,
+                profileId = profile.Id,
+                email = GetUserEmail(),
+                username = profile.Username,
+                name = profile.Name,
+                description = profile.Description,
+                profilePicture = profile.ProfilePictureLink,
+                hasProfile = true
             });
-
-            return Ok(new { message = "Account deleted successfully (GDPR compliant)" });
-
         }
 
-        [HttpPost("UploadProfilePicture")]
-        [Consumes("multipart/form-data")]
-        public async Task<IActionResult> UploadProfilePicture([FromForm] UploadProfilePictureDto dto)
+        /// <summary>
+        /// Delete current user's account - GDPR compliant
+        /// This will:
+        /// 1. Delete user from Keycloak
+        /// 2. Delete user profile from this service
+        /// 3. Publish message to notify other services to delete user data
+        /// </summary>
+        [HttpDelete("delete-me")]
+        public async Task<IActionResult> DeleteMyAccount()
         {
-            if (dto.File == null || dto.File.Length == 0)
-                return BadRequest("No file uploaded.");
+            var userId = GetUserId();
+            var userEmail = GetUserEmail();
+            var userName = GetUserName();
 
-            var url = await _blobService.UploadProfilePictureAsync(dto);
-            await service.UpdateProfilePicture(dto.Id, url);
+            if (string.IsNullOrEmpty(userId))
+            {
+                return Unauthorized(new { message = "User not authenticated" });
+            }
 
-            return Ok(new { message = "Uploaded successfully", url });
+            _logger.LogInformation("GDPR Delete Request: Starting account deletion for user {UserId}", userId);
+
+            try
+            {
+                // Step 1: Delete from Keycloak
+                var keycloakDeleted = await _keycloakService.DeleteUserAsync(userId);
+                if (!keycloakDeleted)
+                {
+                    _logger.LogWarning("Failed to delete user {UserId} from Keycloak, continuing with local deletion", userId);
+                    // Continue anyway - user data should still be deleted from our services
+                }
+                else
+                {
+                    _logger.LogInformation("GDPR Delete: Deleted user {UserId} from Keycloak", userId);
+                }
+
+                // Step 2: Delete profile from local database (if exists)
+                var profile = await _context.Profile
+                    .FirstOrDefaultAsync(p => p.KeycloakUserId == userId);
+
+                if (profile != null)
+                {
+                    _context.Profile.Remove(profile);
+                    await _context.SaveChangesAsync();
+                    _logger.LogInformation("GDPR Delete: Removed profile record for user {UserId}", userId);
+                }
+
+                // Step 3: Publish message to RabbitMQ for other services
+                var message = new AccountDeletedEvent
+                {
+                    UserId = userId,
+                    Username = userName ?? profile?.Username,
+                    Email = userEmail,
+                    DeletedAt = DateTime.UtcNow,
+                    Reason = "GDPR_USER_REQUEST"
+                };
+
+                await _publishEndpoint.Publish(message);
+                _logger.LogInformation("GDPR Delete: Published AccountDeletedEvent for user {UserId}", userId);
+
+                return Ok(new
+                {
+                    message = "Account successfully deleted",
+                    userId = userId,
+                    deletedAt = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "GDPR Delete: Failed to delete account for user {UserId}", userId);
+                return StatusCode(500, new { message = "Failed to delete account. Please contact support." });
+            }
         }
     }
 }
