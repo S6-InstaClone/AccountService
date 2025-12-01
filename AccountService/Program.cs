@@ -2,8 +2,10 @@
 using AccountService.Business;
 using AccountService.Data;
 using AccountService.Persistence;
-using Microsoft.EntityFrameworkCore;
 using MassTransit;
+using Microsoft.EntityFrameworkCore;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 
 namespace AccountService
 {
@@ -14,6 +16,14 @@ namespace AccountService
             var builder = WebApplication.CreateBuilder(args);
 
             // Add services to the container.
+            builder.Services.AddOpenTelemetry()
+                .ConfigureResource(resource => resource.AddService("AccountService"))
+                .WithMetrics(metrics =>
+                {
+                    metrics.AddAspNetCoreInstrumentation()
+                           .AddHttpClientInstrumentation()
+                           .AddPrometheusExporter();
+                });
 
             builder.Services.AddControllers();
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -50,7 +60,7 @@ namespace AccountService
                 app.UseSwagger();
                 app.UseSwaggerUI();
             }
-
+            app.UseOpenTelemetryPrometheusScrapingEndpoint();
             app.UseHttpsRedirection();
 
             app.UseAuthorization();
