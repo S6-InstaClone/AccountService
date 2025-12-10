@@ -7,14 +7,28 @@ namespace AccountService.Business
     public class KeycloakService
     {
         private readonly HttpClient _httpClient;
-        private readonly IConfiguration _config;
         private readonly ILogger<KeycloakService> _logger;
 
-        public KeycloakService(HttpClient httpClient, IConfiguration config, ILogger<KeycloakService> logger)
+        // Configuration from environment variables
+        private readonly string _keycloakUrl;
+        private readonly string _realm;
+        private readonly string _clientId;
+        private readonly string _adminUsername;
+        private readonly string _adminPassword;
+
+        public KeycloakService(HttpClient httpClient, ILogger<KeycloakService> logger)
         {
             _httpClient = httpClient;
-            _config = config;
             _logger = logger;
+
+            // Load from environment variables
+            _keycloakUrl = Environment.GetEnvironmentVariable("KEYCLOAK_ADMIN_URL") ?? "http://keycloak:8080";
+            _realm = Environment.GetEnvironmentVariable("KEYCLOAK_REALM") ?? "instaclone";
+            _clientId = Environment.GetEnvironmentVariable("KEYCLOAK_ADMIN_CLIENT_ID") ?? "admin-cli";
+            _adminUsername = Environment.GetEnvironmentVariable("KEYCLOAK_ADMIN_USERNAME")
+                ?? throw new InvalidOperationException("KEYCLOAK_ADMIN_USERNAME environment variable is required");
+            _adminPassword = Environment.GetEnvironmentVariable("KEYCLOAK_ADMIN_PASSWORD")
+                ?? throw new InvalidOperationException("KEYCLOAK_ADMIN_PASSWORD environment variable is required");
         }
 
         public async Task<bool> DeleteUserAsync(string keycloakUserId)
@@ -31,10 +45,7 @@ namespace AccountService.Business
                 _httpClient.DefaultRequestHeaders.Authorization =
                     new AuthenticationHeaderValue("Bearer", token);
 
-                var keycloakUrl = _config["Keycloak:AdminUrl"] ?? "http://keycloak:8080";
-                var realm = _config["Keycloak:Realm"] ?? "instaclone";
-
-                var deleteUrl = $"{keycloakUrl}/admin/realms/{realm}/users/{keycloakUserId}";
+                var deleteUrl = $"{_keycloakUrl}/admin/realms/{_realm}/users/{keycloakUserId}";
                 _logger.LogDebug("Deleting user from Keycloak: {Url}", deleteUrl);
 
                 var response = await _httpClient.DeleteAsync(deleteUrl);
@@ -47,7 +58,7 @@ namespace AccountService.Business
                 else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
                     _logger.LogWarning("User {UserId} not found in Keycloak (may have been already deleted)", keycloakUserId);
-                    return true; // Consider this a success
+                    return true;
                 }
                 else
                 {
@@ -68,20 +79,15 @@ namespace AccountService.Business
         {
             try
             {
-                var keycloakUrl = _config["Keycloak:AdminUrl"] ?? "http://keycloak:8080";
-                var clientId = _config["Keycloak:AdminClientId"] ?? "admin-cli";
-                var adminUsername = _config["Keycloak:AdminUsername"] ?? "admin";
-                var adminPassword = _config["Keycloak:AdminPassword"] ?? "admin";
-
                 var content = new FormUrlEncodedContent(new[]
                 {
-                    new KeyValuePair<string, string>("client_id", clientId),
-                    new KeyValuePair<string, string>("username", adminUsername),
-                    new KeyValuePair<string, string>("password", adminPassword),
+                    new KeyValuePair<string, string>("client_id", _clientId),
+                    new KeyValuePair<string, string>("username", _adminUsername),
+                    new KeyValuePair<string, string>("password", _adminPassword),
                     new KeyValuePair<string, string>("grant_type", "password")
                 });
 
-                var tokenUrl = $"{keycloakUrl}/realms/master/protocol/openid-connect/token";
+                var tokenUrl = $"{_keycloakUrl}/realms/master/protocol/openid-connect/token";
                 _logger.LogDebug("Getting Keycloak admin token from: {Url}", tokenUrl);
 
                 var response = await _httpClient.PostAsync(tokenUrl, content);
