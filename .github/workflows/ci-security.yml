@@ -55,9 +55,20 @@ jobs:
 
     - name: Run tests with coverage
       env:
-        # Dummy values for KeycloakService constructor (tests use mocks)
+        # Keycloak env vars
         KEYCLOAK_ADMIN_USERNAME: test-admin
         KEYCLOAK_ADMIN_PASSWORD: test-password
+        KEYCLOAK_ADMIN_URL: http://localhost:8080
+        KEYCLOAK_REALM: test-realm
+        KEYCLOAK_ADMIN_CLIENT_ID: admin-cli
+        # Azure Blob Storage env vars
+        AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=dGVzdA==;EndpointSuffix=core.windows.net"
+        AZURE_STORAGE_CONTAINER_NAME: test-container
+        # Database env vars
+        DB_HOST: localhost
+        DB_NAME: testdb
+        DB_USER: testuser
+        DB_PASSWORD: testpass
       run: |
         dotnet test --no-build --configuration Release \
           --verbosity normal \
@@ -127,9 +138,20 @@ jobs:
 
     - name: Test with coverage
       env:
-        # Dummy values for KeycloakService constructor (tests use mocks)
+        # Keycloak env vars
         KEYCLOAK_ADMIN_USERNAME: test-admin
         KEYCLOAK_ADMIN_PASSWORD: test-password
+        KEYCLOAK_ADMIN_URL: http://localhost:8080
+        KEYCLOAK_REALM: test-realm
+        KEYCLOAK_ADMIN_CLIENT_ID: admin-cli
+        # Azure Blob Storage env vars
+        AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=dGVzdA==;EndpointSuffix=core.windows.net"
+        AZURE_STORAGE_CONTAINER_NAME: test-container
+        # Database env vars
+        DB_HOST: localhost
+        DB_NAME: testdb
+        DB_USER: testuser
+        DB_PASSWORD: testpass
       run: |
         dotnet test --no-build \
           --collect:"XPlat Code Coverage" \

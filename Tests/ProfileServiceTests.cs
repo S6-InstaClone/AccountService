@@ -1,15 +1,16 @@
 using AccountService.Business;
 using AccountService.Data;
-using AccountService.Dtos;
 using AccountService.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Tests;
 
 /// <summary>
-/// Tests for ProfileService CRUD operations
+/// Tests for ProfileService
 /// </summary>
-public class ProfileServiceTests : IDisposable
+public class ProfileServiceTests : TestBase, IDisposable
 {
     private readonly AccountRepository _dbContext;
     private readonly ProfileService _profileService;
@@ -21,388 +22,311 @@ public class ProfileServiceTests : IDisposable
             .Options;
 
         _dbContext = new AccountRepository(options);
-        _profileService = new ProfileService(_dbContext);
+        var loggerMock = new Mock<ILogger<ProfileService>>();
+        _profileService = new ProfileService(_dbContext, loggerMock.Object);
     }
 
-    #region CreateProfile Tests
+    #region GetAllProfilesAsync Tests
 
     [Fact]
-    public async Task CreateProfile_ReturnsProfileId_WhenSuccessful()
+    public async Task GetAllProfilesAsync_ReturnsEmptyList_WhenNoProfiles()
     {
-        // Arrange
-        var dto = new CreateProfileDto("testuser", "Test User", "A test description");
-
         // Act
-        var result = await _profileService.CreateProfile(dto);
+        var profiles = await _profileService.GetAllProfilesAsync();
 
         // Assert
-        Assert.True(result > 0);
+        Assert.Empty(profiles);
     }
 
     [Fact]
-    public async Task CreateProfile_SavesProfileToDatabase()
-    {
-        // Arrange
-        var dto = new CreateProfileDto("newuser", "New User", "Description");
-
-        // Act
-        var profileId = await _profileService.CreateProfile(dto);
-
-        // Assert
-        var savedProfile = await _dbContext.Profile.FindAsync(profileId);
-        Assert.NotNull(savedProfile);
-        Assert.Equal("newuser", savedProfile.Username);
-        Assert.Equal("New User", savedProfile.Name);
-        Assert.Equal("Description", savedProfile.Description);
-    }
-
-    [Fact]
-    public async Task CreateProfile_SetsDefaultProfilePicture()
-    {
-        // Arrange
-        var dto = new CreateProfileDto("user", "User", null);
-
-        // Act
-        var profileId = await _profileService.CreateProfile(dto);
-
-        // Assert
-        var savedProfile = await _dbContext.Profile.FindAsync(profileId);
-        Assert.NotNull(savedProfile);
-        Assert.Equal("default_pr_pic", savedProfile.ProfilePictureLink);
-    }
-
-    [Fact]
-    public async Task CreateProfile_AllowsNullDescription()
-    {
-        // Arrange
-        var dto = new CreateProfileDto("user", "User", null);
-
-        // Act
-        var profileId = await _profileService.CreateProfile(dto);
-
-        // Assert
-        var savedProfile = await _dbContext.Profile.FindAsync(profileId);
-        Assert.NotNull(savedProfile);
-        Assert.Null(savedProfile.Description);
-    }
-
-    [Fact]
-    public async Task CreateProfile_AssignsUniqueIds()
-    {
-        // Arrange & Act
-        var id1 = await _profileService.CreateProfile(new CreateProfileDto("user1", "User 1", null));
-        var id2 = await _profileService.CreateProfile(new CreateProfileDto("user2", "User 2", null));
-
-        // Assert
-        Assert.NotEqual(id1, id2);
-    }
-
-    #endregion
-
-    #region UpdateProfileName Tests
-
-    [Fact]
-    public async Task UpdateProfileName_ReturnsTrue_WhenProfileExists()
-    {
-        // Arrange
-        var profile = new Profile("user", "Old Name");
-        _dbContext.Profile.Add(profile);
-        await _dbContext.SaveChangesAsync();
-
-        var dto = new UpdateProfileNameDto { Id = profile.Id, Name = "New Name" };
-
-        // Act
-        var result = await _profileService.UpdateProfileName(dto);
-
-        // Assert
-        Assert.True(result);
-    }
-
-    [Fact]
-    public async Task UpdateProfileName_UpdatesNameInDatabase()
-    {
-        // Arrange
-        var profile = new Profile("user", "Old Name");
-        _dbContext.Profile.Add(profile);
-        await _dbContext.SaveChangesAsync();
-
-        var dto = new UpdateProfileNameDto { Id = profile.Id, Name = "Updated Name" };
-
-        // Act
-        await _profileService.UpdateProfileName(dto);
-
-        // Assert
-        var updatedProfile = await _dbContext.Profile.FindAsync(profile.Id);
-        Assert.Equal("Updated Name", updatedProfile!.Name);
-    }
-
-    [Fact]
-    public async Task UpdateProfileName_ThrowsException_WhenProfileNotFound()
-    {
-        // Arrange
-        var dto = new UpdateProfileNameDto { Id = 999, Name = "New Name" };
-
-        // Act & Assert
-        await Assert.ThrowsAsync<Exception>(() => _profileService.UpdateProfileName(dto));
-    }
-
-    [Fact]
-    public async Task UpdateProfileName_PreservesOtherFields()
-    {
-        // Arrange
-        var profile = new Profile("originaluser", "Original Name", "Original Description");
-        _dbContext.Profile.Add(profile);
-        await _dbContext.SaveChangesAsync();
-
-        var dto = new UpdateProfileNameDto { Id = profile.Id, Name = "New Name" };
-
-        // Act
-        await _profileService.UpdateProfileName(dto);
-
-        // Assert
-        var updatedProfile = await _dbContext.Profile.FindAsync(profile.Id);
-        Assert.Equal("New Name", updatedProfile!.Name);
-        Assert.Equal("originaluser", updatedProfile.Username);
-        Assert.Equal("Original Description", updatedProfile.Description);
-    }
-
-    #endregion
-
-    #region UpdateProfileDescription Tests
-
-    [Fact]
-    public async Task UpdateProfileDescription_ReturnsTrue_WhenProfileExists()
-    {
-        // Arrange
-        var profile = new Profile("user", "Name", "Old description");
-        _dbContext.Profile.Add(profile);
-        await _dbContext.SaveChangesAsync();
-
-        var dto = new UpdateProfileDescDto { Id = profile.Id, Description = "New description" };
-
-        // Act
-        var result = await _profileService.UpdateProfileDescription(dto);
-
-        // Assert
-        Assert.True(result);
-    }
-
-    [Fact]
-    public async Task UpdateProfileDescription_UpdatesDescriptionInDatabase()
-    {
-        // Arrange
-        var profile = new Profile("user", "Name", "Old description");
-        _dbContext.Profile.Add(profile);
-        await _dbContext.SaveChangesAsync();
-
-        var dto = new UpdateProfileDescDto { Id = profile.Id, Description = "Updated description" };
-
-        // Act
-        await _profileService.UpdateProfileDescription(dto);
-
-        // Assert
-        var updatedProfile = await _dbContext.Profile.FindAsync(profile.Id);
-        Assert.Equal("Updated description", updatedProfile!.Description);
-    }
-
-    [Fact]
-    public async Task UpdateProfileDescription_ThrowsException_WhenProfileNotFound()
-    {
-        // Arrange
-        var dto = new UpdateProfileDescDto { Id = 999, Description = "New description" };
-
-        // Act & Assert
-        await Assert.ThrowsAsync<Exception>(() => _profileService.UpdateProfileDescription(dto));
-    }
-
-    #endregion
-
-    #region UpdateProfilePicture Tests
-
-    [Fact]
-    public async Task UpdateProfilePicture_UpdatesUrlInDatabase()
-    {
-        // Arrange
-        var profile = new Profile("user", "Name");
-        _dbContext.Profile.Add(profile);
-        await _dbContext.SaveChangesAsync();
-
-        var newUrl = "http://blob.storage/new-picture.jpg";
-
-        // Act
-        await _profileService.UpdateProfilePicture(profile.Id, newUrl);
-
-        // Assert
-        var updatedProfile = await _dbContext.Profile.FindAsync(profile.Id);
-        Assert.Equal(newUrl, updatedProfile!.ProfilePictureLink);
-    }
-
-    [Fact]
-    public async Task UpdateProfilePicture_OverwritesPreviousUrl()
-    {
-        // Arrange
-        var profile = new Profile("user", "Name");
-        profile.ProfilePictureLink = "http://old-url.com/pic.jpg";
-        _dbContext.Profile.Add(profile);
-        await _dbContext.SaveChangesAsync();
-
-        var newUrl = "http://new-url.com/pic.jpg";
-
-        // Act
-        await _profileService.UpdateProfilePicture(profile.Id, newUrl);
-
-        // Assert
-        var updatedProfile = await _dbContext.Profile.FindAsync(profile.Id);
-        Assert.Equal(newUrl, updatedProfile!.ProfilePictureLink);
-    }
-
-    #endregion
-
-    #region SearchForAProfile Tests
-
-    [Fact]
-    public void SearchForAProfile_ReturnsMatchingProfiles()
-    {
-        // Arrange - Use consistent lowercase for predictable matching
-        // Note: EF InMemory String.Contains is case-sensitive
-        _dbContext.Profile.AddRange(
-            new Profile("alexuser", "Alex User"),      // contains "alex"
-            new Profile("johnalex", "John Alex"),      // contains "alex"  
-            new Profile("john", "John")                // does NOT contain "alex"
-        );
-        _dbContext.SaveChanges();
-
-        // Act
-        var results = _profileService.SearchForAProfile("alex");
-
-        // Assert
-        Assert.Equal(2, results.Count());
-        Assert.All(results, p => Assert.Contains("alex", p.Username!));
-    }
-
-    [Fact]
-    public void SearchForAProfile_ReturnsEmptyList_WhenNoMatches()
+    public async Task GetAllProfilesAsync_ReturnsAllProfiles()
     {
         // Arrange
         _dbContext.Profile.AddRange(
-            new Profile("user1", "User One"),
-            new Profile("user2", "User Two")
+            new Profile("user1", "User One") { KeycloakUserId = "kc-1" },
+            new Profile("user2", "User Two") { KeycloakUserId = "kc-2" },
+            new Profile("user3", "User Three") { KeycloakUserId = "kc-3" }
         );
-        _dbContext.SaveChanges();
+        await _dbContext.SaveChangesAsync();
 
         // Act
-        var results = _profileService.SearchForAProfile("xyz");
+        var profiles = await _profileService.GetAllProfilesAsync();
 
         // Assert
-        Assert.Empty(results);
-    }
-
-    [Fact]
-    public void SearchForAProfile_ThrowsArgumentNullException_WhenUsernameIsEmpty()
-    {
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => _profileService.SearchForAProfile(""));
-    }
-
-    [Fact]
-    public void SearchForAProfile_ThrowsArgumentNullException_WhenUsernameIsNull()
-    {
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => _profileService.SearchForAProfile(null!));
-    }
-
-    [Fact]
-    public void SearchForAProfile_PartialMatchWorks()
-    {
-        // Arrange
-        _dbContext.Profile.Add(new Profile("aleksandar", "Aleksandar"));
-        _dbContext.SaveChanges();
-
-        // Act
-        var results = _profileService.SearchForAProfile("aleks");
-
-        // Assert
-        Assert.Single(results);
-        Assert.Equal("aleksandar", results.First().Username);
-    }
-
-    [Fact]
-    public void SearchForAProfile_ReturnsAllFieldsPopulated()
-    {
-        // Arrange
-        var profile = new Profile("searchme", "Search Me", "A description");
-        _dbContext.Profile.Add(profile);
-        _dbContext.SaveChanges();
-
-        // Act
-        var results = _profileService.SearchForAProfile("searchme");
-
-        // Assert
-        var found = results.Single();
-        Assert.Equal("searchme", found.Username);
-        Assert.Equal("Search Me", found.Name);
-        Assert.Equal("A description", found.Description);
+        Assert.Equal(3, profiles.Count());
     }
 
     #endregion
 
-    #region DeleteProfile Tests
+    #region GetProfileByIdAsync Tests
 
     [Fact]
-    public async Task DeleteProfile_ReturnsProfileId_WhenSuccessful()
+    public async Task GetProfileByIdAsync_ReturnsNull_WhenNotFound()
+    {
+        // Act
+        var profile = await _profileService.GetProfileByIdAsync(99999);
+
+        // Assert
+        Assert.Null(profile);
+    }
+
+    [Fact]
+    public async Task GetProfileByIdAsync_ReturnsProfile_WhenExists()
     {
         // Arrange
-        var profile = new Profile("todelete", "To Delete");
+        var newProfile = new Profile("testuser", "Test User") { KeycloakUserId = "kc-123" };
+        _dbContext.Profile.Add(newProfile);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var profile = await _profileService.GetProfileByIdAsync(newProfile.Id);
+
+        // Assert
+        Assert.NotNull(profile);
+        Assert.Equal("testuser", profile.Username);
+    }
+
+    #endregion
+
+    #region GetProfileByKeycloakIdAsync Tests
+
+    [Fact]
+    public async Task GetProfileByKeycloakIdAsync_ReturnsNull_WhenNotFound()
+    {
+        // Act
+        var profile = await _profileService.GetProfileByKeycloakIdAsync("nonexistent-id");
+
+        // Assert
+        Assert.Null(profile);
+    }
+
+    [Fact]
+    public async Task GetProfileByKeycloakIdAsync_ReturnsProfile_WhenExists()
+    {
+        // Arrange
+        var newProfile = new Profile("testuser", "Test User") { KeycloakUserId = "specific-kc-id" };
+        _dbContext.Profile.Add(newProfile);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var profile = await _profileService.GetProfileByKeycloakIdAsync("specific-kc-id");
+
+        // Assert
+        Assert.NotNull(profile);
+        Assert.Equal("testuser", profile.Username);
+    }
+
+    #endregion
+
+    #region SearchProfilesAsync Tests
+
+    [Fact]
+    public async Task SearchProfilesAsync_ReturnsEmptyList_WhenNoMatches()
+    {
+        // Arrange
+        _dbContext.Profile.AddRange(
+            new Profile("alice", "Alice") { KeycloakUserId = "kc-1" },
+            new Profile("bob", "Bob") { KeycloakUserId = "kc-2" }
+        );
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var profiles = await _profileService.SearchProfilesAsync("xyz");
+
+        // Assert
+        Assert.Empty(profiles);
+    }
+
+    [Fact]
+    public async Task SearchProfilesAsync_FindsMatchingUsername()
+    {
+        // Arrange
+        _dbContext.Profile.AddRange(
+            new Profile("alexsmith", "Alex Smith") { KeycloakUserId = "kc-1" },
+            new Profile("bob", "Bob") { KeycloakUserId = "kc-2" }
+        );
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var profiles = await _profileService.SearchProfilesAsync("alex");
+
+        // Assert
+        Assert.Single(profiles);
+        Assert.Equal("alexsmith", profiles.First().Username);
+    }
+
+    [Fact]
+    public async Task SearchProfilesAsync_FindsMatchingName()
+    {
+        // Arrange
+        _dbContext.Profile.AddRange(
+            new Profile("user1", "Alexander Great") { KeycloakUserId = "kc-1" },
+            new Profile("user2", "Bob") { KeycloakUserId = "kc-2" }
+        );
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var profiles = await _profileService.SearchProfilesAsync("Alexander");
+
+        // Assert
+        Assert.Single(profiles);
+    }
+
+    [Fact]
+    public async Task SearchProfilesAsync_FindsMultipleMatches()
+    {
+        // Arrange
+        _dbContext.Profile.AddRange(
+            new Profile("alexsmith", "Alex Smith") { KeycloakUserId = "kc-1" },
+            new Profile("alexander", "Alexander") { KeycloakUserId = "kc-2" },
+            new Profile("bob", "Bob") { KeycloakUserId = "kc-3" }
+        );
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var profiles = await _profileService.SearchProfilesAsync("alex");
+
+        // Assert
+        Assert.Equal(2, profiles.Count());
+    }
+
+    #endregion
+
+    #region CreateProfileAsync Tests
+
+    [Fact]
+    public async Task CreateProfileAsync_CreatesProfile()
+    {
+        // Arrange
+        var profile = new Profile("newuser", "New User") { KeycloakUserId = "kc-new" };
+
+        // Act
+        var created = await _profileService.CreateProfileAsync(profile);
+
+        // Assert
+        Assert.NotNull(created);
+        Assert.True(created.Id > 0);
+        Assert.Equal("newuser", created.Username);
+    }
+
+    [Fact]
+    public async Task CreateProfileAsync_SavesToDatabase()
+    {
+        // Arrange
+        var profile = new Profile("saveduser", "Saved User") { KeycloakUserId = "kc-saved" };
+
+        // Act
+        await _profileService.CreateProfileAsync(profile);
+
+        // Assert
+        var fromDb = await _dbContext.Profile.FirstOrDefaultAsync(p => p.Username == "saveduser");
+        Assert.NotNull(fromDb);
+    }
+
+    #endregion
+
+    #region UpdateProfileAsync Tests
+
+    [Fact]
+    public async Task UpdateProfileAsync_UpdatesExistingProfile()
+    {
+        // Arrange
+        var profile = new Profile("updateuser", "Original Name") { KeycloakUserId = "kc-update" };
         _dbContext.Profile.Add(profile);
         await _dbContext.SaveChangesAsync();
 
         // Act
-        var result = await _profileService.DeleteProfile(profile.Id);
+        profile.Name = "Updated Name";
+        await _profileService.UpdateProfileAsync(profile);
 
         // Assert
-        Assert.Equal(profile.Id, result);
+        var updated = await _dbContext.Profile.FindAsync(profile.Id);
+        Assert.Equal("Updated Name", updated!.Name);
     }
 
     [Fact]
-    public async Task DeleteProfile_RemovesProfileFromDatabase()
+    public async Task UpdateProfileAsync_UpdatesDescription()
     {
         // Arrange
-        var profile = new Profile("todelete", "To Delete");
+        var profile = new Profile("user", "User") { KeycloakUserId = "kc-1" };
+        _dbContext.Profile.Add(profile);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        profile.Description = "New description";
+        await _profileService.UpdateProfileAsync(profile);
+
+        // Assert
+        var updated = await _dbContext.Profile.FindAsync(profile.Id);
+        Assert.Equal("New description", updated!.Description);
+    }
+
+    #endregion
+
+    #region DeleteProfileAsync Tests
+
+    [Fact]
+    public async Task DeleteProfileAsync_DeletesProfile()
+    {
+        // Arrange
+        var profile = new Profile("deleteuser", "Delete User") { KeycloakUserId = "kc-delete" };
         _dbContext.Profile.Add(profile);
         await _dbContext.SaveChangesAsync();
         var profileId = profile.Id;
 
         // Act
-        await _profileService.DeleteProfile(profileId);
+        await _profileService.DeleteProfileAsync(profile);
 
         // Assert
-        var deletedProfile = await _dbContext.Profile.FindAsync(profileId);
-        Assert.Null(deletedProfile);
+        var deleted = await _dbContext.Profile.FindAsync(profileId);
+        Assert.Null(deleted);
     }
 
     [Fact]
-    public async Task DeleteProfile_ThrowsException_WhenProfileNotFound()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<Exception>(() => _profileService.DeleteProfile(999));
-    }
-
-    [Fact]
-    public async Task DeleteProfile_DoesNotAffectOtherProfiles()
+    public async Task DeleteProfileAsync_OnlyDeletesSpecifiedProfile()
     {
         // Arrange
-        var profileToDelete = new Profile("delete", "Delete Me");
-        var profileToKeep = new Profile("keep", "Keep Me");
-        _dbContext.Profile.AddRange(profileToDelete, profileToKeep);
+        var profile1 = new Profile("user1", "User 1") { KeycloakUserId = "kc-1" };
+        var profile2 = new Profile("user2", "User 2") { KeycloakUserId = "kc-2" };
+        _dbContext.Profile.AddRange(profile1, profile2);
         await _dbContext.SaveChangesAsync();
 
         // Act
-        await _profileService.DeleteProfile(profileToDelete.Id);
+        await _profileService.DeleteProfileAsync(profile1);
 
         // Assert
         var remaining = await _dbContext.Profile.ToListAsync();
         Assert.Single(remaining);
-        Assert.Equal("keep", remaining.First().Username);
+        Assert.Equal("user2", remaining[0].Username);
+    }
+
+    #endregion
+
+    #region ProfileExistsAsync Tests
+
+    [Fact]
+    public async Task ProfileExistsAsync_ReturnsFalse_WhenNotExists()
+    {
+        // Act
+        var exists = await _profileService.ProfileExistsAsync("nonexistent-kc-id");
+
+        // Assert
+        Assert.False(exists);
+    }
+
+    [Fact]
+    public async Task ProfileExistsAsync_ReturnsTrue_WhenExists()
+    {
+        // Arrange
+        var profile = new Profile("existinguser", "Existing") { KeycloakUserId = "existing-kc-id" };
+        _dbContext.Profile.Add(profile);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var exists = await _profileService.ProfileExistsAsync("existing-kc-id");
+
+        // Assert
+        Assert.True(exists);
     }
 
     #endregion
