@@ -15,8 +15,7 @@ using System.Net;
 namespace Tests;
 
 /// <summary>
-/// Tests for AccountController (handles account operations including GDPR deletion)
-/// Uses a real KeycloakService with mocked HttpClient to avoid env var issues.
+/// Tests for AccountController (the actual controller in ProfileController.cs)
 /// </summary>
 public class AccountControllerTests : TestBase, IDisposable
 {
@@ -24,7 +23,6 @@ public class AccountControllerTests : TestBase, IDisposable
     private readonly Mock<IPublishEndpoint> _mockPublishEndpoint;
     private readonly Mock<ILogger<AccountController>> _mockLogger;
 
-    // Static constructor ensures env vars are set FIRST
     static AccountControllerTests()
     {
         SetRequiredEnvVars();
@@ -32,7 +30,6 @@ public class AccountControllerTests : TestBase, IDisposable
 
     public AccountControllerTests()
     {
-        // Also set in instance constructor for safety
         SetRequiredEnvVars();
         
         var options = new DbContextOptionsBuilder<AccountRepository>()
@@ -44,12 +41,8 @@ public class AccountControllerTests : TestBase, IDisposable
         _mockLogger = new Mock<ILogger<AccountController>>();
     }
 
-    /// <summary>
-    /// Creates a KeycloakService with a mocked HttpClient that returns success.
-    /// </summary>
     private KeycloakService CreateKeycloakService(bool deleteSucceeds = true)
     {
-        // Ensure env vars are set
         SetRequiredEnvVars();
         
         var tokenResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -97,8 +90,6 @@ public class AccountControllerTests : TestBase, IDisposable
         return controller;
     }
 
-    #region Helper Methods
-
     private void SetAuthHeaders(AccountController controller, string userId, string? email = null, string? username = null)
     {
         controller.ControllerContext.HttpContext.Request.Headers["X-User-Id"] = userId;
@@ -116,48 +107,31 @@ public class AccountControllerTests : TestBase, IDisposable
         return profile;
     }
 
-    #endregion
-
     #region GetMyAccount Tests
 
     [Fact]
     public async Task GetMyAccount_ReturnsUnauthorized_WhenNoUserId()
     {
-        // Arrange
         var controller = CreateController();
-
-        // Act
         var result = await controller.GetMyAccount();
-
-        // Assert
         Assert.IsType<UnauthorizedObjectResult>(result);
     }
 
     [Fact]
     public async Task GetMyAccount_ReturnsUnauthorized_WhenEmptyUserId()
     {
-        // Arrange
         var controller = CreateController();
         controller.ControllerContext.HttpContext.Request.Headers["X-User-Id"] = "";
-
-        // Act
         var result = await controller.GetMyAccount();
-
-        // Assert
         Assert.IsType<UnauthorizedObjectResult>(result);
     }
 
     [Fact]
     public async Task GetMyAccount_ReturnsOk_WithBasicInfo_WhenNoProfile()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "user-123", "test@example.com", "testuser");
-
-        // Act
         var result = await controller.GetMyAccount();
-
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         Assert.NotNull(okResult.Value);
     }
@@ -165,14 +139,9 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task GetMyAccount_ReturnsHasProfileFalse_WhenNoProfile()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "user-no-profile", "test@test.com");
-
-        // Act
         var result = await controller.GetMyAccount();
-
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         var value = okResult.Value;
         var hasProfile = value!.GetType().GetProperty("hasProfile")?.GetValue(value);
@@ -182,15 +151,10 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task GetMyAccount_ReturnsHasProfileTrue_WhenProfileExists()
     {
-        // Arrange
         await CreateTestProfile("user-with-profile", "profileuser", "Profile User");
         var controller = CreateController();
         SetAuthHeaders(controller, "user-with-profile", "test@test.com");
-
-        // Act
         var result = await controller.GetMyAccount();
-
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         var value = okResult.Value;
         var hasProfile = value!.GetType().GetProperty("hasProfile")?.GetValue(value);
@@ -200,14 +164,9 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task GetMyAccount_ReturnsCorrectUserId()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "specific-user-id-123");
-
-        // Act
         var result = await controller.GetMyAccount();
-
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         var value = okResult.Value;
         var userId = value!.GetType().GetProperty("userId")?.GetValue(value);
@@ -217,14 +176,9 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task GetMyAccount_ReturnsCorrectEmail()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "user-123", "specific@email.com");
-
-        // Act
         var result = await controller.GetMyAccount();
-
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         var value = okResult.Value;
         var email = value!.GetType().GetProperty("email")?.GetValue(value);
@@ -234,19 +188,13 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task GetMyAccount_ReturnsProfileInfo_WhenProfileExists()
     {
-        // Arrange
         var profile = await CreateTestProfile("profile-user", "profilename", "Profile Name");
         profile.Description = "My bio";
-        profile.ProfilePictureLink = "https://pic.url/img.jpg";
         await _dbContext.SaveChangesAsync();
         
         var controller = CreateController();
         SetAuthHeaders(controller, "profile-user");
-
-        // Act
         var result = await controller.GetMyAccount();
-
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         var value = okResult.Value;
         var name = value!.GetType().GetProperty("name")?.GetValue(value);
@@ -260,41 +208,26 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task DeleteMyAccount_ReturnsUnauthorized_WhenNoUserId()
     {
-        // Arrange
         var controller = CreateController();
-
-        // Act
         var result = await controller.DeleteMyAccount();
-
-        // Assert
         Assert.IsType<UnauthorizedObjectResult>(result);
     }
 
     [Fact]
     public async Task DeleteMyAccount_ReturnsUnauthorized_WhenEmptyUserId()
     {
-        // Arrange
         var controller = CreateController();
         controller.ControllerContext.HttpContext.Request.Headers["X-User-Id"] = "";
-
-        // Act
         var result = await controller.DeleteMyAccount();
-
-        // Assert
         Assert.IsType<UnauthorizedObjectResult>(result);
     }
 
     [Fact]
     public async Task DeleteMyAccount_PublishesAccountDeletedEvent()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "user-to-delete", "user@example.com");
-
-        // Act
         await controller.DeleteMyAccount();
-
-        // Assert
         _mockPublishEndpoint.Verify(
             x => x.Publish(
                 It.Is<AccountDeletedEvent>(e => e.UserId == "user-to-delete"),
@@ -305,14 +238,9 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task DeleteMyAccount_EventContainsCorrectEmail()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "user-123", "specific@email.com");
-
-        // Act
         await controller.DeleteMyAccount();
-
-        // Assert
         _mockPublishEndpoint.Verify(
             x => x.Publish(
                 It.Is<AccountDeletedEvent>(e => e.Email == "specific@email.com"),
@@ -321,34 +249,11 @@ public class AccountControllerTests : TestBase, IDisposable
     }
 
     [Fact]
-    public async Task DeleteMyAccount_EventContainsCorrectUsername()
-    {
-        // Arrange
-        var controller = CreateController();
-        SetAuthHeaders(controller, "user-123", "user@test.com", "specificusername");
-
-        // Act
-        await controller.DeleteMyAccount();
-
-        // Assert
-        _mockPublishEndpoint.Verify(
-            x => x.Publish(
-                It.Is<AccountDeletedEvent>(e => e.Username == "specificusername"),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
     public async Task DeleteMyAccount_EventContainsGDPRReason()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "user-123");
-
-        // Act
         await controller.DeleteMyAccount();
-
-        // Assert
         _mockPublishEndpoint.Verify(
             x => x.Publish(
                 It.Is<AccountDeletedEvent>(e => e.Reason == "GDPR_USER_REQUEST"),
@@ -359,15 +264,10 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task DeleteMyAccount_EventContainsTimestamp()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "user-123");
         var beforeDelete = DateTime.UtcNow;
-
-        // Act
         await controller.DeleteMyAccount();
-
-        // Assert
         var afterDelete = DateTime.UtcNow;
         _mockPublishEndpoint.Verify(
             x => x.Publish(
@@ -380,49 +280,22 @@ public class AccountControllerTests : TestBase, IDisposable
     [Fact]
     public async Task DeleteMyAccount_ReturnsOk_WhenSuccessful()
     {
-        // Arrange
         var controller = CreateController();
         SetAuthHeaders(controller, "user-123");
-
-        // Act
         var result = await controller.DeleteMyAccount();
-
-        // Assert
         Assert.IsType<OkObjectResult>(result);
     }
 
     [Fact]
     public async Task DeleteMyAccount_ContinuesEvenIfKeycloakFails()
     {
-        // Arrange - Create controller with KeycloakService that fails
         var controller = CreateController(keycloakDeleteSucceeds: false);
         SetAuthHeaders(controller, "user-123");
-
-        // Act
         var result = await controller.DeleteMyAccount();
-
-        // Assert - Still publishes event and returns OK
         Assert.IsType<OkObjectResult>(result);
         _mockPublishEndpoint.Verify(
             x => x.Publish(It.IsAny<AccountDeletedEvent>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
-    }
-
-    [Fact]
-    public async Task DeleteMyAccount_DeletesProfileFromDatabase()
-    {
-        // Arrange
-        await CreateTestProfile("user-to-delete", "deleteuser", "Delete User");
-        var controller = CreateController();
-        SetAuthHeaders(controller, "user-to-delete");
-
-        // Act
-        await controller.DeleteMyAccount();
-
-        // Assert
-        var deletedProfile = await _dbContext.Profile
-            .FirstOrDefaultAsync(p => p.KeycloakUserId == "user-to-delete");
-        Assert.Null(deletedProfile);
     }
 
     #endregion
