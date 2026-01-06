@@ -3,6 +3,7 @@ using AccountService.Data;
 using AccountService.Persistence;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using OpenTelemetry.Instrumentation.Runtime;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 
@@ -14,14 +15,24 @@ namespace AccountService
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            // Add services to the container.
+            // OpenTelemetry with comprehensive metrics
             builder.Services.AddOpenTelemetry()
-                .ConfigureResource(resource => resource.AddService("AccountService"))
+                .ConfigureResource(resource => resource
+                    .AddService(
+                        serviceName: "AccountService",
+                        serviceVersion: "1.0.0",
+                        serviceInstanceId: Environment.MachineName))
                 .WithMetrics(metrics =>
                 {
-                    metrics.AddAspNetCoreInstrumentation()
-                           .AddHttpClientInstrumentation()
-                           .AddPrometheusExporter();
+                    metrics
+                        // ASP.NET Core metrics (requests, connections)
+                        .AddAspNetCoreInstrumentation()
+                        // HttpClient metrics
+                        .AddHttpClientInstrumentation()
+                        // .NET Runtime metrics (GC, Memory, ThreadPool)
+                        .AddRuntimeInstrumentation()
+                        // Prometheus exporter
+                        .AddPrometheusExporter();
                 });
 
             builder.Services.AddControllers();
@@ -86,6 +97,7 @@ namespace AccountService
                 app.UseSwaggerUI();
             }
 
+            // Prometheus metrics endpoint at /metrics
             app.UseOpenTelemetryPrometheusScrapingEndpoint();
 
             // Only use HTTPS redirection in production with proper certificates
