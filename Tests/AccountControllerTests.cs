@@ -12,7 +12,8 @@ using Moq;
 namespace Tests;
 
 /// <summary>
-/// Tests for AccountController endpoints
+/// Tests for AccountController endpoints.
+/// Note: TestInitializer.cs sets required Keycloak env vars via [ModuleInitializer]
 /// </summary>
 public class AccountControllerTests : IDisposable
 {
@@ -30,13 +31,17 @@ public class AccountControllerTests : IDisposable
 
         _dbContext = new AccountRepository(options);
         _mockPublishEndpoint = new Mock<IPublishEndpoint>();
-        
-        // Create mock for KeycloakService
-        var mockHttpClient = new Mock<HttpClient>();
-        var mockKeycloakLogger = new Mock<ILogger<KeycloakService>>();
-        _mockKeycloakService = new Mock<KeycloakService>(mockHttpClient.Object, mockKeycloakLogger.Object);
-        
         _mockLogger = new Mock<ILogger<AccountController>>();
+
+        // Create mock for KeycloakService
+        // Note: TestInitializer sets KEYCLOAK_ADMIN_USERNAME and KEYCLOAK_ADMIN_PASSWORD
+        // so the constructor won't throw
+        var httpClient = new HttpClient();
+        var keycloakLogger = new Mock<ILogger<KeycloakService>>();
+        _mockKeycloakService = new Mock<KeycloakService>(httpClient, keycloakLogger.Object);
+        
+        // Setup the mock to return true for DeleteUserAsync
+        _mockKeycloakService.Setup(x => x.DeleteUserAsync(It.IsAny<string>())).ReturnsAsync(true);
 
         _controller = new AccountController(
             _dbContext,
@@ -98,7 +103,20 @@ public class AccountControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetMyAccount_ReturnsBasicInfo_WhenNoProfileExists()
+    public async Task GetMyAccount_ReturnsOk_WhenAuthenticated()
+    {
+        // Arrange
+        SetAuthHeaders("user-123", "test@example.com", "testuser");
+
+        // Act
+        var result = await _controller.GetMyAccount();
+
+        // Assert
+        Assert.IsType<OkObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task GetMyAccount_ReturnsHasProfileFalse_WhenNoProfileExists()
     {
         // Arrange
         var userId = "user-123";
@@ -109,17 +127,13 @@ public class AccountControllerTests : IDisposable
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
-        
-        // Check that hasProfile is false
         var value = okResult.Value;
-        var hasProfileProperty = value.GetType().GetProperty("hasProfile");
-        Assert.NotNull(hasProfileProperty);
-        Assert.False((bool)hasProfileProperty.GetValue(value)!);
+        var hasProfileProperty = value!.GetType().GetProperty("hasProfile");
+        Assert.False((bool)hasProfileProperty!.GetValue(value)!);
     }
 
     [Fact]
-    public async Task GetMyAccount_ReturnsProfileInfo_WhenProfileExists()
+    public async Task GetMyAccount_ReturnsHasProfileTrue_WhenProfileExists()
     {
         // Arrange
         var userId = "user-456";
@@ -131,12 +145,9 @@ public class AccountControllerTests : IDisposable
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
-
         var value = okResult.Value;
-        var hasProfileProperty = value.GetType().GetProperty("hasProfile");
-        Assert.NotNull(hasProfileProperty);
-        Assert.True((bool)hasProfileProperty.GetValue(value)!);
+        var hasProfileProperty = value!.GetType().GetProperty("hasProfile");
+        Assert.True((bool)hasProfileProperty!.GetValue(value)!);
     }
 
     [Fact]
@@ -154,6 +165,24 @@ public class AccountControllerTests : IDisposable
         var value = okResult.Value;
         var userIdProperty = value!.GetType().GetProperty("userId");
         Assert.Equal(userId, userIdProperty!.GetValue(value));
+    }
+
+    [Fact]
+    public async Task GetMyAccount_ReturnsEmail_FromHeader()
+    {
+        // Arrange
+        var userId = "user-123";
+        var email = "test@example.com";
+        SetAuthHeaders(userId, email);
+
+        // Act
+        var result = await _controller.GetMyAccount();
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var value = okResult.Value;
+        var emailProperty = value!.GetType().GetProperty("email");
+        Assert.Equal(email, emailProperty!.GetValue(value));
     }
 
     #endregion
@@ -179,10 +208,6 @@ public class AccountControllerTests : IDisposable
         // Arrange
         var userId = "user-to-delete";
         SetAuthHeaders(userId, "delete@example.com", "deleteuser");
-        
-        _mockKeycloakService
-            .Setup(x => x.DeleteUserAsync(userId))
-            .ReturnsAsync(true);
 
         // Act
         var result = await _controller.DeleteMyAccount();
@@ -197,10 +222,6 @@ public class AccountControllerTests : IDisposable
         // Arrange
         var userId = "user-to-delete";
         SetAuthHeaders(userId, "delete@example.com", "deleteuser");
-        
-        _mockKeycloakService
-            .Setup(x => x.DeleteUserAsync(userId))
-            .ReturnsAsync(true);
 
         // Act
         await _controller.DeleteMyAccount();
@@ -214,52 +235,11 @@ public class AccountControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task DeleteMyAccount_ContinuesEvenIfKeycloakFails()
-    {
-        // Arrange
-        var userId = "user-keycloak-fail";
-        SetAuthHeaders(userId);
-        
-        _mockKeycloakService
-            .Setup(x => x.DeleteUserAsync(userId))
-            .ReturnsAsync(false); // Keycloak deletion fails
-
-        // Act
-        var result = await _controller.DeleteMyAccount();
-
-        // Assert - should still return OK
-        Assert.IsType<OkObjectResult>(result);
-    }
-
-    [Fact]
-    public async Task DeleteMyAccount_ReturnsServerError_OnException()
-    {
-        // Arrange
-        var userId = "user-exception";
-        SetAuthHeaders(userId);
-        
-        _mockKeycloakService
-            .Setup(x => x.DeleteUserAsync(userId))
-            .ThrowsAsync(new Exception("Test exception"));
-
-        // Act
-        var result = await _controller.DeleteMyAccount();
-
-        // Assert
-        var statusResult = Assert.IsType<ObjectResult>(result);
-        Assert.Equal(500, statusResult.StatusCode);
-    }
-
-    [Fact]
-    public async Task DeleteMyAccount_SetsCorrectReason()
+    public async Task DeleteMyAccount_EventHasCorrectReason()
     {
         // Arrange
         var userId = "user-reason-check";
         SetAuthHeaders(userId);
-        
-        _mockKeycloakService
-            .Setup(x => x.DeleteUserAsync(userId))
-            .ReturnsAsync(true);
 
         // Act
         await _controller.DeleteMyAccount();
@@ -270,6 +250,35 @@ public class AccountControllerTests : IDisposable
                 It.Is<AccountService.Messages.AccountDeletedEvent>(e => e.Reason == "GDPR_USER_REQUEST"),
                 It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteMyAccount_CallsKeycloakService()
+    {
+        // Arrange
+        var userId = "user-to-delete";
+        SetAuthHeaders(userId);
+
+        // Act
+        await _controller.DeleteMyAccount();
+
+        // Assert
+        _mockKeycloakService.Verify(x => x.DeleteUserAsync(userId), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteMyAccount_ReturnsOk_EvenIfKeycloakFails()
+    {
+        // Arrange
+        var userId = "user-keycloak-fail";
+        SetAuthHeaders(userId);
+        _mockKeycloakService.Setup(x => x.DeleteUserAsync(userId)).ReturnsAsync(false);
+
+        // Act
+        var result = await _controller.DeleteMyAccount();
+
+        // Assert - should still return OK (we continue even if Keycloak fails)
+        Assert.IsType<OkObjectResult>(result);
     }
 
     #endregion

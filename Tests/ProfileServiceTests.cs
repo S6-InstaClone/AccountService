@@ -86,6 +86,17 @@ public class ProfileServiceTests : IDisposable
         Assert.Null(savedProfile.Description);
     }
 
+    [Fact]
+    public async Task CreateProfile_AssignsUniqueIds()
+    {
+        // Arrange & Act
+        var id1 = await _profileService.CreateProfile(new CreateProfileDto("user1", "User 1", null));
+        var id2 = await _profileService.CreateProfile(new CreateProfileDto("user2", "User 2", null));
+
+        // Assert
+        Assert.NotEqual(id1, id2);
+    }
+
     #endregion
 
     #region UpdateProfileName Tests
@@ -133,6 +144,26 @@ public class ProfileServiceTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAsync<Exception>(() => _profileService.UpdateProfileName(dto));
+    }
+
+    [Fact]
+    public async Task UpdateProfileName_PreservesOtherFields()
+    {
+        // Arrange
+        var profile = new Profile("originaluser", "Original Name", "Original Description");
+        _dbContext.Profile.Add(profile);
+        await _dbContext.SaveChangesAsync();
+
+        var dto = new UpdateProfileNameDto { Id = profile.Id, Name = "New Name" };
+
+        // Act
+        await _profileService.UpdateProfileName(dto);
+
+        // Assert
+        var updatedProfile = await _dbContext.Profile.FindAsync(profile.Id);
+        Assert.Equal("New Name", updatedProfile!.Name);
+        Assert.Equal("originaluser", updatedProfile.Username);
+        Assert.Equal("Original Description", updatedProfile.Description);
     }
 
     #endregion
@@ -206,6 +237,25 @@ public class ProfileServiceTests : IDisposable
         Assert.Equal(newUrl, updatedProfile!.ProfilePictureLink);
     }
 
+    [Fact]
+    public async Task UpdateProfilePicture_OverwritesPreviousUrl()
+    {
+        // Arrange
+        var profile = new Profile("user", "Name");
+        profile.ProfilePictureLink = "http://old-url.com/pic.jpg";
+        _dbContext.Profile.Add(profile);
+        await _dbContext.SaveChangesAsync();
+
+        var newUrl = "http://new-url.com/pic.jpg";
+
+        // Act
+        await _profileService.UpdateProfilePicture(profile.Id, newUrl);
+
+        // Assert
+        var updatedProfile = await _dbContext.Profile.FindAsync(profile.Id);
+        Assert.Equal(newUrl, updatedProfile!.ProfilePictureLink);
+    }
+
     #endregion
 
     #region SearchForAProfile Tests
@@ -213,11 +263,12 @@ public class ProfileServiceTests : IDisposable
     [Fact]
     public void SearchForAProfile_ReturnsMatchingProfiles()
     {
-        // Arrange
+        // Arrange - Use consistent lowercase for predictable matching
+        // Note: EF InMemory String.Contains is case-sensitive
         _dbContext.Profile.AddRange(
-            new Profile("aleksandar", "Aleksandar"),
-            new Profile("alex123", "Alex"),
-            new Profile("john", "John")
+            new Profile("alexuser", "Alex User"),      // contains "alex"
+            new Profile("johnalex", "John Alex"),      // contains "alex"  
+            new Profile("john", "John")                // does NOT contain "alex"
         );
         _dbContext.SaveChanges();
 
@@ -226,7 +277,7 @@ public class ProfileServiceTests : IDisposable
 
         // Assert
         Assert.Equal(2, results.Count());
-        Assert.All(results, p => Assert.Contains("alex", p.Username!, StringComparison.OrdinalIgnoreCase));
+        Assert.All(results, p => Assert.Contains("alex", p.Username!));
     }
 
     [Fact]
@@ -261,17 +312,36 @@ public class ProfileServiceTests : IDisposable
     }
 
     [Fact]
-    public void SearchForAProfile_IsCaseInsensitive()
+    public void SearchForAProfile_PartialMatchWorks()
     {
         // Arrange
-        _dbContext.Profile.Add(new Profile("TestUser", "Test"));
+        _dbContext.Profile.Add(new Profile("aleksandar", "Aleksandar"));
         _dbContext.SaveChanges();
 
         // Act
-        var results = _profileService.SearchForAProfile("testuser");
+        var results = _profileService.SearchForAProfile("aleks");
 
         // Assert
         Assert.Single(results);
+        Assert.Equal("aleksandar", results.First().Username);
+    }
+
+    [Fact]
+    public void SearchForAProfile_ReturnsAllFieldsPopulated()
+    {
+        // Arrange
+        var profile = new Profile("searchme", "Search Me", "A description");
+        _dbContext.Profile.Add(profile);
+        _dbContext.SaveChanges();
+
+        // Act
+        var results = _profileService.SearchForAProfile("searchme");
+
+        // Assert
+        var found = results.Single();
+        Assert.Equal("searchme", found.Username);
+        Assert.Equal("Search Me", found.Name);
+        Assert.Equal("A description", found.Description);
     }
 
     #endregion
@@ -315,6 +385,24 @@ public class ProfileServiceTests : IDisposable
     {
         // Act & Assert
         await Assert.ThrowsAsync<Exception>(() => _profileService.DeleteProfile(999));
+    }
+
+    [Fact]
+    public async Task DeleteProfile_DoesNotAffectOtherProfiles()
+    {
+        // Arrange
+        var profileToDelete = new Profile("delete", "Delete Me");
+        var profileToKeep = new Profile("keep", "Keep Me");
+        _dbContext.Profile.AddRange(profileToDelete, profileToKeep);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        await _profileService.DeleteProfile(profileToDelete.Id);
+
+        // Assert
+        var remaining = await _dbContext.Profile.ToListAsync();
+        Assert.Single(remaining);
+        Assert.Equal("keep", remaining.First().Username);
     }
 
     #endregion

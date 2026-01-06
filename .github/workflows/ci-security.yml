@@ -54,6 +54,10 @@ jobs:
       run: dotnet build --configuration Release --no-restore
 
     - name: Run tests with coverage
+      env:
+        # Dummy values for KeycloakService constructor (tests use mocks)
+        KEYCLOAK_ADMIN_USERNAME: test-admin
+        KEYCLOAK_ADMIN_PASSWORD: test-password
       run: |
         dotnet test --no-build --configuration Release \
           --verbosity normal \
@@ -122,6 +126,10 @@ jobs:
       run: dotnet build --no-incremental --no-restore
 
     - name: Test with coverage
+      env:
+        # Dummy values for KeycloakService constructor (tests use mocks)
+        KEYCLOAK_ADMIN_USERNAME: test-admin
+        KEYCLOAK_ADMIN_PASSWORD: test-password
       run: |
         dotnet test --no-build \
           --collect:"XPlat Code Coverage" \
