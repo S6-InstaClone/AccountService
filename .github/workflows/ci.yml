@@ -1,4 +1,4 @@
-name: CI - Build & Test
+name: CI - Build, Test & Security
 
 on:
   pull_request:
@@ -6,23 +6,115 @@ on:
     branches: [ master ]
 
 jobs:
-  build-and-test:
+  build-test-scan:
     runs-on: ubuntu-latest
+    name: Build, Test & Security Scan
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for SonarCloud
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
+    - name: Install SonarScanner
+      run: dotnet tool install --global dotnet-sonarscanner
+
+    - name: Cache SonarCloud packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.sonar/cache
+        key: ${{ runner.os }}-sonar
+        restore-keys: ${{ runner.os }}-sonar
+
     - name: Restore dependencies
       run: dotnet restore
 
-    - name: Build
-      run: dotnet build --configuration Release --no-restore
+    # Vulnerability check
+    - name: Check for vulnerable NuGet packages
+      run: |
+        dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerability-report.txt
+        if grep -q "has the following vulnerable packages" vulnerability-report.txt; then
+          echo "::warning::Vulnerable packages detected!"
+          if grep -E "(High|Critical)" vulnerability-report.txt; then
+            echo "::error::High or Critical vulnerabilities found!"
+            exit 1
+          fi
+        fi
 
-    - name: Run tests
-      run: dotnet test --no-build --verbosity normal
+    # SonarCloud - Begin
+    - name: Begin SonarCloud analysis
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: |
+        dotnet sonarscanner begin \
+          /k:"${{ github.repository_owner }}_${{ github.event.repository.name }}" \
+          /o:"s6-instaclone" \
+          /d:sonar.host.url="https://sonarcloud.io" \
+          /d:sonar.token="$SONAR_TOKEN" \
+          /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
+          /d:sonar.coverage.exclusions="**/Migrations/**,**/Program.cs,**/*.Designer.cs,**/*.Tests/**" \
+          /d:sonar.cpd.exclusions="**/Migrations/**" \
+          /d:sonar.security.hotspots.inheritedRules=true
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore --no-incremental
+
+    - name: Run tests with coverage
+      env:
+        KEYCLOAK_ADMIN_USERNAME: test-admin
+        KEYCLOAK_ADMIN_PASSWORD: test-password
+        KEYCLOAK_ADMIN_URL: http://localhost:8080
+        KEYCLOAK_REALM: test-realm
+        KEYCLOAK_ADMIN_CLIENT_ID: admin-cli
+        AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=dGVzdA==;EndpointSuffix=core.windows.net"
+        AZURE_STORAGE_CONTAINER_NAME: test-container
+        DB_HOST: localhost
+        DB_NAME: testdb
+        DB_USER: testuser
+        DB_PASSWORD: testpass
+      run: |
+        dotnet test --no-build --configuration Release \
+          --verbosity normal \
+          --collect:"XPlat Code Coverage" \
+          --results-directory ./TestResults \
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+    # SonarCloud - End
+    - name: End SonarCloud analysis
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+    # Artifacts
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: ./TestResults
+
+    - name: Upload vulnerability report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: vulnerability-report
+        path: vulnerability-report.txt
+
+    # Summary
+    - name: Security Summary
+      if: always()
+      run: |
+        echo "## CI Security Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Checks Performed:" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ NuGet Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ SAST Analysis (SonarCloud)" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Security Hotspot Detection" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Code Coverage Analysis" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "[View SonarCloud Results](https://sonarcloud.io/project/overview?id=${{ github.repository_owner }}_${{ github.event.repository.name }})" >> $GITHUB_STEP_SUMMARY

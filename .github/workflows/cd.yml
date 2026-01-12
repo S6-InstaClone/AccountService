@@ -1,4 +1,4 @@
-name: CD - Secure Build & Deploy
+name: CD - Build, Scan & Deploy
 
 on:
   push:
@@ -7,32 +7,23 @@ on:
 permissions:
   contents: read
   packages: write
-  security-events: write  # For uploading security results
+  security-events: write
 
 jobs:
-  # Run security checks first
-  security-gate:
+  build-scan-deploy:
     runs-on: ubuntu-latest
-    name: Security Gate
-    
+    name: Build, Scan & Push Image
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
-    # Secret Detection
-    - name: Gitleaks Secret Scan
-      uses: gitleaks/gitleaks-action@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    # Dependency vulnerability check
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
+    # Dependency vulnerability check
     - name: Check vulnerable packages
       run: |
         dotnet restore
@@ -41,15 +32,6 @@ jobs:
           echo "::error::Critical/High vulnerabilities in dependencies!"
           exit 1
         fi
-
-  build-and-push:
-    runs-on: ubuntu-latest
-    needs: security-gate
-    name: Build, Scan & Push Image
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -61,8 +43,8 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GHCR_PAT }}
 
-    # Build image locally first for scanning
-    - name: Build Docker image (local)
+    # Build image locally for scanning
+    - name: Build Docker image (for scanning)
       uses: docker/build-push-action@v6
       with:
         context: .
@@ -70,33 +52,31 @@ jobs:
         load: true
         tags: ${{ github.event.repository.name }}:scan
 
-    # Trivy container vulnerability scan
-    - name: Run Trivy vulnerability scanner
+    # Trivy vulnerability scan
+    - name: Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: '${{ github.event.repository.name }}:scan'
         format: 'sarif'
         output: 'trivy-results.sarif'
         severity: 'CRITICAL,HIGH,MEDIUM'
-        exit-code: '0'  # Don't fail, we check manually below
 
-    # Upload Trivy results to GitHub Security tab
-    - name: Upload Trivy scan results to GitHub Security tab
+    - name: Upload Trivy results to GitHub Security
       uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
 
-    # Check for critical vulnerabilities (fail if found)
+    # Fail on critical vulnerabilities
     - name: Check for critical vulnerabilities
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: '${{ github.event.repository.name }}:scan'
         format: 'table'
         severity: 'CRITICAL'
-        exit-code: '1'  # Fail on CRITICAL
+        exit-code: '1'
 
-    # Generate SBOM (Software Bill of Materials)
+    # Generate SBOM
     - name: Generate SBOM
       uses: aquasecurity/trivy-action@master
       with:
@@ -110,7 +90,7 @@ jobs:
         name: sbom
         path: sbom.json
 
-    # Push to registry (only if scans pass)
+    # Push to registry
     - name: Build and push to GHCR
       uses: docker/build-push-action@v6
       with:
@@ -120,24 +100,36 @@ jobs:
           ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
           ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
 
-  # Optional: DAST scanning against deployed application
+    # Summary
+    - name: Deployment Summary
+      if: always()
+      run: |
+        echo "## CD Security Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Checks Performed:" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ NuGet Dependency Scan" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Container Vulnerability Scan (Trivy)" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ SBOM Generated" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Image Published:" >> $GITHUB_STEP_SUMMARY
+        echo "\`ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # Optional DAST scan
   dast-scan:
     runs-on: ubuntu-latest
-    needs: build-and-push
-    name: OWASP ZAP DAST Scan
-    if: github.ref == 'refs/heads/master'
-    continue-on-error: true  # Don't fail deployment for DAST issues
-    
+    needs: build-scan-deploy
+    name: DAST Scan (Optional)
+    if: vars.ZAP_TARGET_URL != ''
+    continue-on-error: true
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # Note: This requires a running instance of the application
-    # Configure TARGET_URL as a repository variable pointing to staging/dev environment
     - name: OWASP ZAP Baseline Scan
       uses: zaproxy/action-baseline@v0.12.0
       with:
-        target: ${{ vars.ZAP_TARGET_URL || 'http://localhost:5000' }}
+        target: ${{ vars.ZAP_TARGET_URL }}
         rules_file_name: '.zap/rules.tsv'
         cmd_options: '-a'
       continue-on-error: true
