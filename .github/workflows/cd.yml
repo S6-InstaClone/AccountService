@@ -65,7 +65,6 @@ jobs:
         format: 'sarif'
         output: 'trivy-results.sarif'
         severity: 'CRITICAL,HIGH,MEDIUM'
-        trivyignores: '.trivyignore'
       continue-on-error: true
 
     # Only upload SARIF if file exists
@@ -83,7 +82,6 @@ jobs:
         format: 'table'
         severity: 'CRITICAL'
         exit-code: '1'
-        trivyignores: '.trivyignore'
 
     # Generate SBOM
     - name: Generate SBOM
