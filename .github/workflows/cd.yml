@@ -52,22 +52,24 @@ jobs:
         load: true
         tags: ${{ github.event.repository.name }}:scan
 
-    # Trivy vulnerability scan
-    - name: Trivy vulnerability scanner
+    # Trivy vulnerability scan - save to SARIF
+    - name: Trivy vulnerability scanner (SARIF)
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: '${{ github.event.repository.name }}:scan'
         format: 'sarif'
         output: 'trivy-results.sarif'
         severity: 'CRITICAL,HIGH,MEDIUM'
+      continue-on-error: true
 
+    # Only upload SARIF if file exists
     - name: Upload Trivy results to GitHub Security
-      uses: github/codeql-action/upload-sarif@v3
-      if: always()
+      uses: github/codeql-action/upload-sarif@v4
+      if: always() && hashFiles('trivy-results.sarif') != ''
       with:
         sarif_file: 'trivy-results.sarif'
 
-    # Fail on critical vulnerabilities
+    # Fail on critical vulnerabilities (table output for logs)
     - name: Check for critical vulnerabilities
       uses: aquasecurity/trivy-action@master
       with:
